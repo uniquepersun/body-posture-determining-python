@@ -1,17 +1,43 @@
 import cv2
 import mediapipe as mp
-import numpy as np
-from sklearn.model_selection import train_test_split
-from sklearn.svm import SVC
 import math
+
+def calculate_angle(a, b, c):
+    radians = math.acos(((a[0] - b[0]) * (c[0] - b[0]) + (a[1] - b[1]) * (c[1] - b[1]) + (a[2] - b[2]) * (c[2] - b[2])) /
+                       ((math.sqrt((a[0] - b[0])**2 + (a[1] - b[1])**2 + (a[2] - b[2])**2)) *
+                        (math.sqrt((c[0] - b[0])**2 + (c[1] - b[1])**2 + (c[2] - b[2])**2))))
+    return math.degrees(radians)
+
+def classify_posture(landmarks):
+    shoulder_left = landmarks[mp_pose.PoseLandmark.LEFT_SHOULDER]
+    shoulder_right = landmarks[mp_pose.PoseLandmark.RIGHT_SHOULDER]
+    hip_left = landmarks[mp_pose.PoseLandmark.LEFT_HIP]
+    hip_right = landmarks[mp_pose.PoseLandmark.RIGHT_HIP]
+    knee_left = landmarks[mp_pose.PoseLandmark.LEFT_KNEE]
+    knee_right = landmarks[mp_pose.PoseLandmark.RIGHT_KNEE]
+    ankle_left = landmarks[mp_pose.PoseLandmark.LEFT_ANKLE]
+    ankle_right = landmarks[mp_pose.PoseLandmark.RIGHT_ANKLE]
+    knee_angle_left = calculate_angle(shoulder_left, hip_left, knee_left)
+    knee_angle_right = calculate_angle(shoulder_right, hip_right, knee_right)
+    hip_angle = calculate_angle(shoulder_left, hip_left, hip_right)
+    shoulder_width = abs(shoulder_left[0] - shoulder_right[0])
+    hip_width = abs(hip_left[0] - hip_right[0])
+    standing_threshold = 170
+    sitting_threshold = 120
+    crouching_threshold = 90
+    if knee_angle_left > standing_threshold and knee_angle_right > standing_threshold and shoulder_width > hip_width:
+        posture = "standing"
+    elif hip_angle < sitting_threshold and shoulder_width < hip_width:
+        posture = "sitting"
+    elif knee_angle_left < crouching_threshold and knee_angle_right < crouching_threshold:
+        posture = "crouching"
+    else:
+        posture = "undetermined"
+
+    return posture
 
 mp_pose = mp.solutions.pose
 pose = mp_pose.Pose()
-
-def draw_landmarks(image, results):
-    mp_drawing = mp.solutions.drawing_utils
-    mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
-
 cap = cv2.VideoCapture(0)
 
 while True:
@@ -21,77 +47,17 @@ while True:
 
     image_rgb = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
     results = pose.process(image_rgb)
+
     if results.pose_landmarks:
-        draw_landmarks(image, results)
+        landmarks = [[landmark.x, landmark.y, landmark.z] for landmark in results.pose_landmarks.landmark]
+        posture = classify_posture(landmarks)
+        cv2.putText(image, posture, (50, 50), cv2.FONT_HERSHEY_SIMPLEX, 1, (0, 255, 0), 2, cv2.LINE_AA)
+        mp_drawing = mp.solutions.drawing_utils
+        mp_drawing.draw_landmarks(image, results.pose_landmarks, mp_pose.POSE_CONNECTIONS)
 
     cv2.imshow('body posture detection', image)
     if cv2.waitKey(1) & 0xFF == ord('q'):
         break
-
-def calculate_angle(a, b, c):
-  a = np.array(a)
-  b = np.array(b)
-  c = np.array(c)
-
-  radians = np.arctan2(c[1]-b[1], c[0]-b[0]) - np.arctan2(a[1]-b[1], a[0]-b[0])
-  angle = np.abs(radians*180.0/np.pi)
-
-  if angle > 180.0:
-    angle = 360 - angle
-
-  return angle
-
-def calculate_distance(p1, p2):
-  return np.linalg.norm(p1 - p2)
-
-def calculate_ratios(landmarks):
-  shoulder_left = 11
-  elbow_left = 13
-  wrist_left = 15
-  hip_left = 23
-  knee_left = 25
-  ankle_left = 27
-  arm_length_ratio_left = calculate_distance(landmarks[elbow_left], landmarks[wrist_left]) / \
-                         calculate_distance(landmarks[shoulder_left], landmarks[elbow_left])
-  leg_length_ratio_left = calculate_distance(landmarks[knee_left], landmarks[ankle_left]) / \
-                         calculate_distance(landmarks[hip_left], landmarks[knee_left])
-  torso_to_arm_ratio_left = calculate_distance(landmarks[shoulder_left], landmarks[hip_left]) / \
-                           calculate_distance(landmarks[shoulder_left], landmarks[elbow_left])
-  ratios = [arm_length_ratio_left, leg_length_ratio_left, torso_to_arm_ratio_left]
-
-  return ratios
-
-def extract_keypoints(results):
- 
-  if not results.pose_landmarks:
-    return np.zeros((33, 3))
-
-  keypoints = np.array([[landmark.x, landmark.y, landmark.z] for landmark in results.pose_landmarks.landmark])
-  return keypoints
-
-def extract_features(results):
-  landmarks = extract_keypoints(results)
-
-  angles = []
-  for i in range(22):
-    for j in range(i + 1, 22):
-      for k in range(j + 1, 22):
-        angle = calculate_angle(landmarks[i * 3:(i + 1) * 3],
-                               landmarks[j * 3:(j + 1) * 3],
-                               landmarks[k * 3:(k + 1) * 3])
-        angles.append(angle)
-
-  distances = []
-  for i in range(22):
-    for j in range(i + 1, 22):
-      distance = calculate_distance(landmarks[i * 3:(i + 1) * 3],
-                                   landmarks[j * 3:(j + 1) * 3])
-      distances.append(distance)
-
-  ratios = calculate_ratios(landmarks)
-
-  features = np.concatenate([landmarks, angles, distances, ratios])
-  return features
 
 cap.release()
 cv2.destroyAllWindows()
